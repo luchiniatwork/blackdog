@@ -1,0 +1,4 @@
+{:paths ["src" "dev"]
+ 
+ :deps {org.clojure/core.async          {:mvn/version "0.6.532"}
+        clj-serial                      {:mvn/version "2.0.5"}}}

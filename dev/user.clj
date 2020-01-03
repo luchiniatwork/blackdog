@@ -26,7 +26,7 @@
      (if (or (and (or (= from 'pending)
                       (= from 'ready)
                       (= from 'cmd)
-                      (= from 'receive-mode))
+                      (= from 'ready-to-receive))
                   (= to 'ready))
 
              (and (= from 'ready)
@@ -36,10 +36,16 @@
                   (= to 'receive-mode))
 
              (and (= from 'receive-mode)
-                  (= to 'ready-to-receive))
+                  (= to 'waiting-receive-ack))
              
+             (and (= from 'ready)
+                  (= to 'ready-to-receive))
+
              (and (= from 'ready-to-receive)
-                  (= to 'receive-mode)))
+                  (= to 'waiting-receive-ack))
+
+             (and (= from 'waiting-receive-ack)
+                  (= to 'ready-to-receive)))
        (reset! state (vary-meta to assoc :opts opts))
        (throw (ex-info "Illegal transition" {:from from :to to}))))))
 
@@ -49,6 +55,9 @@
   (let [start (. System (nanoTime))
         retry-count (atom 0)]
     (loop []
+      (println "waiting for" target-state "while it's" @state "at"
+               (/ (- (. System (nanoTime)) start) 1000000.0)
+               "ms")
       (Thread/sleep 5)
       (when (>= (- (. System (nanoTime)) start)
                 500000000.0)
@@ -74,49 +83,43 @@
 
 (defn ^:private start-receive-mode! [{:keys [port] :as board} file-name]
   (wait-for board 'ready)
-  (transition-to! 'receive-mode)
-  (let [cmd (str "io.receive(\"" file-name "\")\r")]
-    (serial/write port (.getBytes cmd))))
+  (let [cmd (str "io.receive(\"" file-name "\")")]
+    (transition-to! 'receive-mode cmd)
+    (serial/write port (.getBytes (str cmd "\r")))))
 
 (defn ^:private write-chunk! [{:keys [port] :as board} n buf]
   (wait-for board 'ready-to-receive)
+  (println "writing chunk")
   (serial/write port (byte-array [n]))
+  (Thread/sleep 50)
   (serial/write port (->> buf
                           (take n)
-                          byte-array)))
+                          byte-array))
+  (transition-to! 'waiting-receive-ack))
 
 (defn ^:private finalize-file! [{:keys [port] :as board}]
   (wait-for board 'ready-to-receive)
-  (serial/write port (byte-array [0])))
+  (println "finalizing file")
+  (serial/write port (byte-array [0]))
+  (transition-to! 'ready))
 
 (defn write-file!
-([board file-name]
- (write-file! board file-name file-name))
-([board src-file-name dst-file-name]
- (let [fis (io/input-stream (io/file src-file-name))]
-   (start-receive-mode! board dst-file-name)
-   (loop []
-     (let [buf (byte-array chunksize)
-           n (.read fis buf)]
-       (if (pos? n)
-         (do (println "Read and will write" n "bytes")
-             (write-chunk! board n buf)
-             (recur))
-         (finalize-file! board)))))))
+  ([board file-name]
+   (write-file! board file-name file-name))
+  ([board src-file-name dst-file-name]
+   (let [fis (io/input-stream (io/file src-file-name))]
+     (start-receive-mode! board dst-file-name)
+     (loop []
+       (let [buf (byte-array chunksize)
+             n (.read fis buf)]
+         (if (pos? n)
+           (do (println "Read and will write" n "bytes")
+               (write-chunk! board n buf)
+               (recur))
+           (finalize-file! board)))))))
 
 (defn ^:private parse-entry [e]
-  #_(println (str "Parsing: '" e "'"))
-  #_(println "- Parser will"
-             (cond
-               (= "/ > " e)
-               "transition to ready"
-
-               (and (= 'cmd @state)
-                    (not= (-> @state meta :opts first) e))
-               "console out"
-               
-               :otherwise
-               "not recognize"))
+  (println (str "Parsing: '" e "' - meta: '" (-> @state meta :opts) "'"))
   (cond
     (= "/ > " e)
     (transition-to! 'ready)
@@ -125,34 +128,41 @@
     (when (not= (-> @state meta :opts) e)
       (println e))
 
-    (= "")
+    (= 'receive-mode @state)
+    (when (= (-> @state meta :opts) e)
+      (transition-to! 'waiting-receive-ack))
+
+    (= :control e)
+    (transition-to! 'ready-to-receive)
+
+    (= "" e)
     (do)
-    
+
     :otherwise
     (do
       (println "UNKNOWN!" (-> e .getBytes vec)))))
 
 (defn ^:private rx-listener [rx-chan]
-(fn [is]
-  (let [buf (byte-array chunksize)
-        n (.read is buf)
-        parsed (->> buf
-                    (take n)
-                    byte-array
-                    String.)]
-    (go (doseq [b (->> buf
-                       (take n)
-                       byte-array)]
-          (>! rx-chan b)))
-    #_(println "\n====\nRead" n "bytes")
-    #_(println " =" (->> buf
+  (fn [is]
+    (let [buf (byte-array chunksize)
+          n (.read is buf)
+          parsed (->> buf
+                      (take n)
+                      byte-array
+                      String.)]
+      (go (doseq [b (->> buf
                          (take n)
-                         byte-array
-                         vec))
-    #_(println " =" (->> buf
-                         (take n)
-                         byte-array
-                         String.)))))
+                         byte-array)]
+            (>! rx-chan b)))
+      #_(println "\n====\nRead" n "bytes")
+      #_(println " =" (->> buf
+                           (take n)
+                           byte-array
+                           vec))
+      #_(println " =" (->> buf
+                           (take n)
+                           byte-array
+                           String.)))))
 
 (defn connect-board! [port-id]
   (reset-state!)
@@ -230,6 +240,8 @@
 #_(send-command board "os.remove(\"touch.lua\")")
 
 #_(send-command board "os")
+
+#_(write-file! board "touch.lua")
 
 #_(disconnect-board! board)
 

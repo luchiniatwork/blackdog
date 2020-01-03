@@ -13,6 +13,9 @@
 
 (def ^:private crlf (atom :none))
 
+(defn ^:private log [& args]
+  #_(apply println args))
+
 (defn reset-state! []
   (reset! state 'pending)
   (reset! entry "")
@@ -55,9 +58,9 @@
   (let [start (. System (nanoTime))
         retry-count (atom 0)]
     (loop []
-      (println "waiting for" target-state "while it's" @state "at"
-               (/ (- (. System (nanoTime)) start) 1000000.0)
-               "ms")
+      (log "waiting for" target-state "while it's" @state "at"
+           (/ (- (. System (nanoTime)) start) 1000000.0)
+           "ms")
       (Thread/sleep 5)
       (when (>= (- (. System (nanoTime)) start)
                 500000000.0)
@@ -89,7 +92,7 @@
 
 (defn ^:private write-chunk! [{:keys [port] :as board} n buf]
   (wait-for board 'ready-to-receive)
-  (println "writing chunk")
+  (log "writing chunk")
   (serial/write port (byte-array [n]))
   (Thread/sleep 50)
   (serial/write port (->> buf
@@ -99,7 +102,7 @@
 
 (defn ^:private finalize-file! [{:keys [port] :as board}]
   (wait-for board 'ready-to-receive)
-  (println "finalizing file")
+  (log "finalizing file")
   (serial/write port (byte-array [0]))
   (transition-to! 'ready))
 
@@ -113,13 +116,13 @@
        (let [buf (byte-array chunksize)
              n (.read fis buf)]
          (if (pos? n)
-           (do (println "Read and will write" n "bytes")
+           (do (log "Read and will write" n "bytes")
                (write-chunk! board n buf)
                (recur))
            (finalize-file! board)))))))
 
 (defn ^:private parse-entry [e]
-  (println (str "Parsing: '" e "' - meta: '" (-> @state meta :opts) "'"))
+  (log (str "Parsing: '" e "' - meta: '" (-> @state meta :opts) "'"))
   (cond
     (= "/ > " e)
     (transition-to! 'ready)
@@ -140,7 +143,7 @@
 
     :otherwise
     (do
-      (println "UNKNOWN!" (-> e .getBytes vec)))))
+      (log "UNKNOWN!" (-> e .getBytes vec)))))
 
 (defn ^:private rx-listener [rx-chan]
   (fn [is]
@@ -154,15 +157,15 @@
                          (take n)
                          byte-array)]
             (>! rx-chan b)))
-      #_(println "\n====\nRead" n "bytes")
-      #_(println " =" (->> buf
-                           (take n)
-                           byte-array
-                           vec))
-      #_(println " =" (->> buf
-                           (take n)
-                           byte-array
-                           String.)))))
+      (log "\n====\nRead" n "bytes")
+      (log " =" (->> buf
+                     (take n)
+                     byte-array
+                     vec))
+      (log " =" (->> buf
+                     (take n)
+                     byte-array
+                     String.)))))
 
 (defn connect-board! [port-id]
   (reset-state!)
@@ -174,13 +177,11 @@
 
     (go-loop []
       (let [x (<! entries-chan)]
-        #_(println "---" x "---")
         (parse-entry x))
       (recur))
 
     (go-loop []
       (let [x (<! rx-chan)]
-        #_(print "Seeing" x "with crlf as" @crlf)
         (cond
           ;; cr has already seen and now lf, so crlf is true
           (and (= :cr @crlf) (= x 10))
@@ -188,7 +189,8 @@
 
           ;; we saw a cr but this is not an lf, so we reset to the start
           (and (= :cr @crlf) (not= x 10))
-          (reset! crlf :none)
+          (do (swap! entry #(str % "\r" (char x)))
+              (reset! crlf :none))
 
           ;; a cr! cool!
           (= x 13)
@@ -200,7 +202,8 @@
 
           ;; we saw a control before but this is not an lf, so we reset to the start
           (and (= :control-start @crlf) (not= x 10))
-          (reset! crlf :none)
+          (do (swap! entry #(str % "C" (char x)))
+              (reset! crlf :none))
 
           ;; a "C" represents a potential control
           (= x 67)
@@ -208,9 +211,8 @@
           
           :otherwise
           (swap! entry #(str % (char x))))
-        #_(println " crlf now is" @crlf)
         (when (or (= @crlf :crlf) (= @crlf :control-ack))
-          (do #_(println "Putting entry in queue")
+          (do (log "Putting entry in queue")
               (case @crlf
                 :crlf
                 (let [entry-out @entry]
@@ -242,6 +244,8 @@
 #_(send-command board "os")
 
 #_(write-file! board "touch.lua")
+
+#_(send-command board "os.cat(\"touch.lua\")")
 
 #_(disconnect-board! board)
 

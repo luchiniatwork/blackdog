@@ -1,18 +1,18 @@
 (ns user
-  (:require [blackdog.board :as b]))
+  (:require [blackdog.core :as bd]))
 
-#_(def board (b/connect-board! "/dev/cu.SLAB_USBtoUART"))
+#_(def board (bd/connect-board! "/dev/cu.SLAB_USBtoUART"))
 
-#_(b/send-command board "os.version()")
+#_(bd/send-command board "os.version()")
 
-#_(b/send-command board "os.ls()")
+#_(bd/send-command board "os.ls()")
 
-#_(b/send-command board "os.remove(\"touch.lua\")")
+#_(bd/send-command board "os.remove(\"touch.lua\")")
 
-#_(b/send-command board "os")
+#_(bd/send-command board "os")
 
-#_(b/write-file! board "touch.lua")
+#_(bd/write-file! board "touch.lua")
 
-#_(b/send-command board "os.cat(\"touch.lua\")")
+#_(bd/send-command board "os.cat(\"touch.lua\")")
 
-#_(b/disconnect-board! board)
+#_(bd/disconnect-board! board)

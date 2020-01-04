@@ -1,9 +1,10 @@
-(ns blackdog.board
-  (:require [serial.core :as serial]
-            [serial.util :as util]
+(ns blackdog.core
+  (:require [clojure.core.async :refer [<! >! <!! >!! go go-loop chan pipeline]]
             [clojure.java.io :as io]
             [clojure.string :as s]
-            [clojure.core.async :refer [<! >! <!! >!! go go-loop chan pipeline]]))
+            [juxt.dirwatch :as watch]
+            [serial.core :as serial]
+            [serial.util :as util]))
 
 (def ^:private chunksize 255)
 
@@ -99,7 +100,8 @@
   (wait-for board 'ready-to-receive)
   (log "finalizing file")
   (serial/write port (byte-array [0]))
-  (transition-to! 'ready))
+  (force-ready! board)
+  #_(transition-to! 'ready))
 
 (defn ^:private parse-rx [x entries-chan]
   (cond
@@ -148,9 +150,13 @@
     (= "/ > " e)
     (transition-to! 'ready)
 
-    (= 'cmd @state)
-    (when (not= (-> @state meta :opts) e)
-      (println e))
+    (and (= 'cmd @state)
+         (not= (-> @state meta :opts) e))
+    (println e)
+
+    (and (= 'cmd @state)
+         (= (-> @state meta :opts) e))
+    (println "")
 
     (= 'receive-mode @state)
     (when (= (-> @state meta :opts) e)
@@ -199,15 +205,18 @@
    (write-file! board file-name file-name))
   ([board src-file-name dst-file-name]
    (let [fis (io/input-stream (io/file src-file-name))]
+     (println "\nsrc:" src-file-name "-> dst:" dst-file-name)
      (start-receive-mode! board dst-file-name)
      (loop []
        (let [buf (byte-array chunksize)
              n (.read fis buf)]
+         (print ".")
          (if (pos? n)
            (do (log "Read and will write" n "bytes")
                (write-chunk! board n buf)
                (recur))
            (finalize-file! board)))))
+   (println "")
    true))
 
 (defn connect-board! [port-id]

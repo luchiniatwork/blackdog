@@ -1,8 +1,10 @@
 (ns blackdog.core
-  (:require [clojure.core.async :refer [<! >! <!! >!! go go-loop chan pipeline]]
+  (:require [blackdog.plugin-fennel :as fennel]
+            [clojure.core.async :refer [<! >! <!! >!! go go-loop chan]]
             [clojure.java.io :as io]
             [clojure.string :as s]
             [juxt.dirwatch :as watch]
+            [me.raynes.fs :as fs]
             [serial.core :as serial]
             [serial.util :as util]))
 
@@ -245,6 +247,50 @@
 (defn disconnect-board! [{:keys [port] :as board}]
   (serial/close! port)
   true)
+
+
+(defn ^:private copy-to
+  ([from to]
+   (copy-to (constantly true) from to))
+  ([pred from to]
+   (let [from-f (io/file from)
+         drop-n (count (fs/split from-f))]
+     (doseq [file (->> from io/file file-seq
+                       (filter #(not (fs/directory? %)))
+                       (filter pred))]
+       (let [file-sub-path (drop drop-n (fs/split file))]
+         (println "Preparing:" (.getPath (apply io/file file-sub-path)))
+         (fs/copy+ file
+                   (apply io/file (into [to] file-sub-path))))))))
+
+(defn ^:private transpile-to
+  [pred transpile-f from to]
+  (let [from-f (io/file from)
+        drop-n (count (fs/split from-f))]
+    (doseq [file (->> from io/file file-seq
+                      (filter #(not (fs/directory? %)))
+                      (filter pred))]
+      (let [file-sub-path (drop drop-n (fs/split file))]
+        (println "Transpiling:" (.getPath (apply io/file file-sub-path)))
+        (transpile-f file from to)))))
+
+(defn watch-dir
+  ([dir]
+   (watch-dir dir nil))
+  ([dir {:keys [out-dir clean-out?]
+         :or {out-dir "out/"
+              clean-out? true}
+         :as opts}]
+   (println "\nWatching dir:" dir)
+   (println "Working dir:" out-dir)
+   (when (and clean-out? (fs/exists? out-dir))
+     (println "Cleaning:" out-dir)
+     (fs/delete-dir out-dir))
+   (copy-to #(not (fennel/matcher %))
+            dir out-dir)
+   (transpile-to fennel/matcher
+                 fennel/transpile
+                 dir out-dir)))
 
 (comment
   (def board (connect-board! "/dev/cu.SLAB_USBtoUART"))

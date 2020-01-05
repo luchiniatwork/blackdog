@@ -1,5 +1,14 @@
 (ns user
-  (:require [blackdog.core :as bd]))
+  (:require [blackdog.core :as bd]
+            [juxt.dirwatch :as watch]
+            [clojure.java.io :as io]))
+
+#_(watch/watch-dir (fn [{:keys [file]}]
+                     (.getCanonical file))
+                   (io/file "tests/src"))
+
+#_(bd/watch-dir "tests/src")
+
 
 #_(def board (bd/connect-board! "/dev/cu.SLAB_USBtoUART"))
 

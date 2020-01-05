@@ -9,6 +9,8 @@
 
 #_(bd/watch-dir "tests/src")
 
+#_(bd/stop-watch-dir)
+
 
 #_(def board (bd/connect-board! "/dev/cu.SLAB_USBtoUART"))
 

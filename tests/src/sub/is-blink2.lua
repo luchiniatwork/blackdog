@@ -8,8 +8,6 @@
 -- doing other things.
 -- ----------------------------------------------------------------
 
-
-
 thread.start(function()
       led = pio.GPIO4
       button = pio.GPIO19

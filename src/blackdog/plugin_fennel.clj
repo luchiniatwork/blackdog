@@ -5,7 +5,7 @@
 (defn matcher [f]
   (= ".fnl" (fs/extension f)))
 
-(defn transpile [f from to]
+(defn transpile [from to f]
   (let [from-f (io/file from)
         drop-n (count (fs/split from-f))
         file-sub-path (drop-last (drop drop-n (fs/split f)))

@@ -16,6 +16,8 @@
 
 (def ^:private crlf (atom :none))
 
+(def ^:private watcher (atom nil))
+
 (defn ^:private log [& args]
   #_(apply println args))
 
@@ -248,49 +250,97 @@
   (serial/close! port)
   true)
 
+(defn ^:private valid-file
+  ([file]
+   (valid-file (constantly true) file))
+  ([pred file]
+   (let [ff (io/file file)]
+     (and (not (fs/directory? ff))
+          (pred ff)))))
 
-(defn ^:private copy-to
+(defn ^:private valid-files
+  [pred from]
+  (->> from io/file file-seq
+       (filter #(valid-file pred %))))
+
+(defn ^:private sanitized-file-src-path
+  [from file]
+  (let [drop-n (-> from io/file .getAbsolutePath fs/split count)
+        file-sub-path (->> file .getAbsolutePath fs/split (drop drop-n))]
+    (.getPath (apply io/file file-sub-path))))
+
+(defn ^:private sanitized-file-to-path
+  [from to file]
+  (let [drop-n (-> from io/file .getAbsolutePath fs/split count)
+        file-sub-path (->> file .getAbsolutePath fs/split (drop drop-n))]
+    (.getPath (apply io/file (into [to] file-sub-path)))))
+
+(defn ^:private copy-file-to
+  [from to file]
+  (println "Preparing:" (sanitized-file-src-path from file))
+  (fs/copy+ file (sanitized-file-to-path from to file)))
+
+(defn ^:private copy-dir-to
   ([from to]
-   (copy-to (constantly true) from to))
+   (copy-dir-to (constantly true) from to))
   ([pred from to]
-   (let [from-f (io/file from)
-         drop-n (count (fs/split from-f))]
-     (doseq [file (->> from io/file file-seq
-                       (filter #(not (fs/directory? %)))
-                       (filter pred))]
-       (let [file-sub-path (drop drop-n (fs/split file))]
-         (println "Preparing:" (.getPath (apply io/file file-sub-path)))
-         (fs/copy+ file
-                   (apply io/file (into [to] file-sub-path))))))))
+   (doseq [file (valid-files pred from)]
+     (copy-file-to from to file))))
 
-(defn ^:private transpile-to
+(defn ^:private transpile-file-to
+  [transpile-f from to file]
+  (println "Transpiling:" (sanitized-file-src-path from file))
+  (transpile-f from to file))
+
+(defn ^:private transpile-dir-to
   [pred transpile-f from to]
-  (let [from-f (io/file from)
-        drop-n (count (fs/split from-f))]
-    (doseq [file (->> from io/file file-seq
-                      (filter #(not (fs/directory? %)))
-                      (filter pred))]
-      (let [file-sub-path (drop drop-n (fs/split file))]
-        (println "Transpiling:" (.getPath (apply io/file file-sub-path)))
-        (transpile-f file from to)))))
+  (doseq [file (valid-files pred from)]
+    (transpile-file-to transpile-f from to file)))
+
+(defn ^:private watcher-handler
+  [from to]
+  (fn [{:keys [file]}]
+    (println "Change detected:" (sanitized-file-src-path from file))
+    (cond
+      (valid-file fennel/matcher file)
+      (transpile-file-to fennel/transpile from to file)
+
+      (valid-file file)
+      (copy-file-to from to file))))
+
+(defn ^:private initialize-dir
+  [dir {:keys [out-dir clean-out?]
+        :or {out-dir "out/"
+             clean-out? true}
+        :as opts}]
+  (println "\nWatching dir:" dir)
+  (println "Working dir:" out-dir)
+  (when (and clean-out? (fs/exists? out-dir))
+    (println "Cleaning:" out-dir)
+    (fs/delete-dir out-dir))
+  (copy-dir-to #(not (fennel/matcher %))
+               dir out-dir)
+  (transpile-dir-to fennel/matcher
+                    fennel/transpile
+                    dir out-dir)
+  (reset! watcher (watch/watch-dir (watcher-handler dir out-dir)
+                                   (io/file dir)))
+  true)
 
 (defn watch-dir
   ([dir]
    (watch-dir dir nil))
-  ([dir {:keys [out-dir clean-out?]
-         :or {out-dir "out/"
-              clean-out? true}
-         :as opts}]
-   (println "\nWatching dir:" dir)
-   (println "Working dir:" out-dir)
-   (when (and clean-out? (fs/exists? out-dir))
-     (println "Cleaning:" out-dir)
-     (fs/delete-dir out-dir))
-   (copy-to #(not (fennel/matcher %))
-            dir out-dir)
-   (transpile-to fennel/matcher
-                 fennel/transpile
-                 dir out-dir)))
+  ([dir opts]
+   (if-not @watcher
+     (initialize-dir dir opts)
+     (println "\nA watcher is already running!"))))
+
+(defn stop-watch-dir []
+  (if-not @watcher
+    (println "\nNo watcher initialized to stop!")
+    (do (watch/close-watcher @watcher)
+        (reset! watcher nil)
+        true)))
 
 (comment
   (def board (connect-board! "/dev/cu.SLAB_USBtoUART"))

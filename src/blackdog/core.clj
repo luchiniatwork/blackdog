@@ -150,27 +150,36 @@
 (defn ^:private parse-entry [e]
   (log (str "Parsing: '" e "' - meta: '" (-> @state meta :opts) "'"))
   (cond
+    ;; Prompt found. We should be ready
+    ;; FIXME: make it more generic in case user chdirs
     (= "/ > " e)
     (transition-to! 'ready)
 
+    ;; We are parsing a command and it's not the echo
     (and (= 'cmd @state)
          (not= (-> @state meta :opts) e))
     (println e)
 
+    ;; We are parsing a command and it's the echo
     (and (= 'cmd @state)
          (= (-> @state meta :opts) e))
     (println "")
 
+    ;; If it's in receive-mode and it's an echo, we can start waiting
     (= 'receive-mode @state)
     (when (= (-> @state meta :opts) e)
       (transition-to! 'waiting-receive-ack))
 
+    ;; During receive, we just got a control and should transition to
+    ;; ready to receive
     (= :control e)
     (transition-to! 'ready-to-receive)
 
+    ;; Sometimes it's just a padding line
     (= "" e)
     (do)
 
+    ;; Other times we have no idea what's happening
     :otherwise
     (do
       (log "UNKNOWN!" (-> e .getBytes vec)))))

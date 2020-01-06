@@ -1,13 +1,8 @@
 (ns user
   (:require [blackdog.core :as bd]
-            [juxt.dirwatch :as watch]
             [clojure.java.io :as io]))
 
-#_(watch/watch-dir (fn [{:keys [file]}]
-                     (.getCanonical file))
-                   (io/file "tests/src"))
-
-#_(bd/watch-dir "tests/src")
+#_(bd/watch-dir "tests/src" board)
 
 #_(bd/stop-watch-dir)
 
@@ -22,8 +17,20 @@
 
 #_(bd/send-command board "os")
 
-#_(bd/write-file! board "touch.lua")
+#_(bd/write-file! board "out/touch.lua" "touch.lua")
+
+#_(bd/write-file! board "out/touch2.lua" "touch2.lua")
+
+#_(bd/send-command board "os.mkdir(\"another-sub\")")
+
+#_(bd/send-command board "os.mkdir(\"sub1/sub2/sub3\")")
+
+#_(bd/write-file! board "out/another-sub/blink.lua" "another-sub2/blink333.lua")
 
 #_(bd/send-command board "os.cat(\"touch.lua\")")
 
 #_(bd/disconnect-board! board)
+
+#_(with-out-str (bd/send-command board "os.exists(\"another-sub2\")"))
+
+#_(bd/mk-remote-dirs board "sub1/sub2/sub3/blink333.lua")

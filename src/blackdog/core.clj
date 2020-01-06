@@ -16,7 +16,7 @@
 
 (def ^:private crlf (atom :none))
 
-(def ^:private watcher (atom nil))
+(def ^:private watchers (atom nil))
 
 (defn ^:private log [& args]
   #_(apply println args))
@@ -104,8 +104,7 @@
   (wait-for board 'ready-to-receive)
   (log "finalizing file")
   (serial/write port (byte-array [0]))
-  (force-ready! board)
-  #_(transition-to! 'ready))
+  (force-ready! board))
 
 (defn ^:private parse-rx [x entries-chan]
   (cond
@@ -204,10 +203,24 @@
   (send-command* board cmd)
   nil)
 
+(defn mk-remote-dirs
+  [board dst]
+  (let [parts (drop-last (s/split dst #"\/"))]
+    (loop [accum []
+           part (first parts)
+           r (rest parts)]
+      (let [new-accum (conj accum part)
+            path (s/join "/" new-accum)]
+        (when-not (= "" path)
+          (send-command board (str "os.mkdir(\"" path "\")")))
+        (when-not (empty? r)
+          (recur new-accum (first r) (rest r)))))))
+
 (defn write-file!
   ([board file-name]
    (write-file! board file-name file-name))
   ([board src-file-name dst-file-name]
+   (mk-remote-dirs board dst-file-name)
    (let [fis (io/input-stream (io/file src-file-name))]
      (println "\nsrc:" src-file-name "-> dst:" dst-file-name)
      (start-receive-mode! board dst-file-name)
@@ -275,6 +288,12 @@
         file-sub-path (->> file .getAbsolutePath fs/split (drop drop-n))]
     (.getPath (apply io/file (into [to] file-sub-path)))))
 
+#_(defn ^:private sanitized-file-outbound-path
+    [out-dir file]
+    (let [drop-n (-> out-dir io/file .getAbsolutePath fs/split count)
+          file-sub-path (->> file .getAbsolutePath fs/split (drop drop-n))]
+      (.getPath (apply io/file file-sub-path))))
+
 (defn ^:private copy-file-to
   [from to file]
   (println "Preparing:" (sanitized-file-src-path from file))
@@ -297,7 +316,7 @@
   (doseq [file (valid-files pred from)]
     (transpile-file-to transpile-f from to file)))
 
-(defn ^:private watcher-handler
+(defn ^:private inbound-handler
   [from to]
   (fn [{:keys [file]}]
     (println "Change detected:" (sanitized-file-src-path from file))
@@ -308,11 +327,24 @@
       (valid-file file)
       (copy-file-to from to file))))
 
+(defn ^:private outbound-handler
+  [from board]
+  (fn [{:keys [file]}]
+    (println "AQUI!!!" (sanitized-file-src-path file))
+    #_(write-file! board (sanitized-file-src-path file))))
+
+(defn ^:private write-all-out
+  [board to]
+  (doseq [file (->> to io/file file-seq (filter fs/file?))]
+    (let [pretty-file (sanitized-file-src-path to file)]
+      (println "\nWriting:" pretty-file)
+      (write-file! board (.getPath file) pretty-file))))
+
 (defn ^:private initialize-dir
-  [dir {:keys [out-dir clean-out?]
-        :or {out-dir "out/"
-             clean-out? true}
-        :as opts}]
+  [dir board {:keys [out-dir clean-out?]
+              :or {out-dir "out/"
+                   clean-out? true}
+              :as opts}]
   (println "\nWatching dir:" dir)
   (println "Working dir:" out-dir)
   (when (and clean-out? (fs/exists? out-dir))
@@ -323,23 +355,27 @@
   (transpile-dir-to fennel/matcher
                     fennel/transpile
                     dir out-dir)
-  (reset! watcher (watch/watch-dir (watcher-handler dir out-dir)
-                                   (io/file dir)))
+  (write-all-out board out-dir)
+  #_(reset! watchers {:inbound (watch/watch-dir (inbound-handler dir out-dir)
+                                                (io/file dir))
+                      :outbound (watch/watch-dir (outbound-handler dir board)
+                                                 (io/file out-dir))})
   true)
 
 (defn watch-dir
-  ([dir]
-   (watch-dir dir nil))
-  ([dir opts]
-   (if-not @watcher
-     (initialize-dir dir opts)
+  ([dir board]
+   (watch-dir dir board nil))
+  ([dir board opts]
+   (if-not @watchers
+     (initialize-dir dir board opts)
      (println "\nA watcher is already running!"))))
 
 (defn stop-watch-dir []
-  (if-not @watcher
+  (if-not @watchers
     (println "\nNo watcher initialized to stop!")
-    (do (watch/close-watcher @watcher)
-        (reset! watcher nil)
+    (do (watch/close-watcher (:inbound @watchers))
+        (watch/close-watcher (:outbound @watchers))
+        (reset! watchers nil)
         true)))
 
 (comment

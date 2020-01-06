@@ -87,14 +87,13 @@
 (defn ^:private start-receive-mode! [{:keys [port] :as board} file-name]
   (wait-for board 'ready)
   (let [cmd (str "io.receive(\"" file-name "\")")]
-    (transition-to! 'receive-mode cmd)
+    (transition-to! 'receive-mode {:cmd cmd})
     (serial/write port (.getBytes (str cmd "\r")))))
 
 (defn ^:private write-chunk! [{:keys [port] :as board} n buf]
   (wait-for board 'ready-to-receive)
   (log "writing chunk")
   (serial/write port (byte-array [n]))
-  (Thread/sleep 50)
   (serial/write port (->> buf
                           (take n)
                           byte-array))
@@ -149,40 +148,45 @@
 
 (defn ^:private parse-entry [e]
   (log (str "Parsing: '" e "' - meta: '" (-> @state meta :opts) "'"))
-  (cond
-    ;; Prompt found. We should be ready
-    ;; FIXME: make it more generic in case user chdirs
-    (= "/ > " e)
-    (transition-to! 'ready)
+  (let [state-cmd (-> @state meta :opts :cmd)
+        state-out-chan (-> @state meta :opts :out-chan)]
+    (cond
+      ;; Prompt found after a command. We should be ready and inform command
+      ;; FIXME: make it more generic in case user chdirs
+      (and (= "/ > " e)
+           (= 'cmd @state))
+      (do (>!! state-out-chan :done)
+          (transition-to! 'ready))
+      
+      ;; Prompt found. We should be ready
+      ;; FIXME: make it more generic in case user chdirs
+      (= "/ > " e)
+      (transition-to! 'ready)
 
-    ;; We are parsing a command and it's not the echo
-    (and (= 'cmd @state)
-         (not= (-> @state meta :opts) e))
-    (println e)
+      ;; We are parsing a command and it's not the echo so it's console
+      ;; out. Inform command.
+      (and (= 'cmd @state)
+           (not= state-cmd e))
+      (>!! state-out-chan e)
 
-    ;; We are parsing a command and it's the echo
-    (and (= 'cmd @state)
-         (= (-> @state meta :opts) e))
-    (println "")
+      ;; If it's in receive-mode and it's an echo, we can start waiting
+      (= 'receive-mode @state)
+      (when (= state-cmd e)
+        (transition-to! 'waiting-receive-ack))
 
-    ;; If it's in receive-mode and it's an echo, we can start waiting
-    (= 'receive-mode @state)
-    (when (= (-> @state meta :opts) e)
-      (transition-to! 'waiting-receive-ack))
+      ;; During receive, we just got a control and should transition to
+      ;; ready to receive
+      (= :control e)
+      (transition-to! 'ready-to-receive)
 
-    ;; During receive, we just got a control and should transition to
-    ;; ready to receive
-    (= :control e)
-    (transition-to! 'ready-to-receive)
+      ;; Sometimes it's just a padding line
+      (= "" e)
+      (do)
 
-    ;; Sometimes it's just a padding line
-    (= "" e)
-    (do)
-
-    ;; Other times we have no idea what's happening
-    :otherwise
-    (do
-      (log "UNKNOWN!" (-> e .getBytes vec)))))
+      ;; Other times we have no idea what's happening
+      :otherwise
+      (do
+        (log "UNKNOWN!" (-> e .getBytes vec))))))
 
 (defn ^:private rx-listener [rx-chan]
   (fn [is]
@@ -208,9 +212,15 @@
 
 (defn send-command [{:keys [port] :as board} cmd]
   (wait-for board 'ready)
-  (transition-to! 'cmd cmd)
-  (send-command* board cmd)
-  nil)
+  (let [out-chan (chan)]
+    (transition-to! 'cmd {:cmd cmd
+                          :out-chan out-chan})
+    (send-command* board cmd)
+    (println (<!! (go-loop [out []]
+                    (let [i (<! out-chan)]
+                      (if (= :done i)
+                        (s/join "\n" out)
+                        (recur (conj out i)))))))))
 
 (defn mk-remote-dirs
   [board dst]
@@ -221,7 +231,10 @@
       (let [new-accum (conj accum part)
             path (s/join "/" new-accum)]
         (when-not (= "" path)
-          (send-command board (str "os.mkdir(\"" path "\")")))
+          (when (= "false\n" (with-out-str
+                               (send-command board
+                                             (str "os.exists(\"" path "\")"))))
+            (send-command board (str "os.mkdir(\"" path "\")"))))
         (when-not (empty? r)
           (recur new-accum (first r) (rest r)))))))
 
@@ -231,7 +244,7 @@
   ([board src-file-name dst-file-name]
    (mk-remote-dirs board dst-file-name)
    (let [fis (io/input-stream (io/file src-file-name))]
-     (println "\nsrc:" src-file-name "-> dst:" dst-file-name)
+     (print "Writing:" src-file-name "as" dst-file-name " ")
      (start-receive-mode! board dst-file-name)
      (loop []
        (let [buf (byte-array chunksize)
@@ -346,7 +359,6 @@
   [board to]
   (doseq [file (->> to io/file file-seq (filter fs/file?))]
     (let [pretty-file (sanitized-file-src-path to file)]
-      (println "\nWriting:" pretty-file)
       (write-file! board (.getPath file) pretty-file))))
 
 (defn ^:private initialize-dir
@@ -354,7 +366,7 @@
               :or {out-dir "out/"
                    clean-out? true}
               :as opts}]
-  (println "\nWatching dir:" dir)
+  (println "Watching dir:" dir)
   (println "Working dir:" out-dir)
   (when (and clean-out? (fs/exists? out-dir))
     (println "Cleaning:" out-dir)
@@ -377,11 +389,11 @@
   ([dir board opts]
    (if-not @watchers
      (initialize-dir dir board opts)
-     (println "\nA watcher is already running!"))))
+     (println "A watcher is already running!"))))
 
 (defn stop-watch-dir []
   (if-not @watchers
-    (println "\nNo watcher initialized to stop!")
+    (println "No watcher initialized to stop!")
     (do (watch/close-watcher (:inbound @watchers))
         (watch/close-watcher (:outbound @watchers))
         (reset! watchers nil)

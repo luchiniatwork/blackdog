@@ -222,7 +222,7 @@
                         (s/join "\n" out)
                         (recur (conj out i)))))))))
 
-(defn mk-remote-dirs
+(defn ^:private mk-remote-dirs
   [board dst]
   (let [parts (drop-last (s/split dst #"\/"))]
     (loop [accum []
@@ -281,7 +281,17 @@
       (force-ready! board)
       board)))
 
+(defn stop-watch-dir []
+  (if-not @watchers
+    (println "No watcher initialized to stop!")
+    (do (watch/close-watcher (:inbound @watchers))
+        (watch/close-watcher (:outbound @watchers))
+        (reset! watchers nil)
+        true)))
+
 (defn disconnect-board! [{:keys [port] :as board}]
+  (when @watchers
+    (stop-watch-dir))
   (serial/close! port)
   true)
 
@@ -310,12 +320,6 @@
         file-sub-path (->> file .getAbsolutePath fs/split (drop drop-n))]
     (.getPath (apply io/file (into [to] file-sub-path)))))
 
-#_(defn ^:private sanitized-file-outbound-path
-    [out-dir file]
-    (let [drop-n (-> out-dir io/file .getAbsolutePath fs/split count)
-          file-sub-path (->> file .getAbsolutePath fs/split (drop drop-n))]
-      (.getPath (apply io/file file-sub-path))))
-
 (defn ^:private copy-file-to
   [from to file]
   (println "Preparing:" (sanitized-file-src-path from file))
@@ -340,20 +344,21 @@
 
 (defn ^:private inbound-handler
   [from to]
-  (fn [{:keys [file]}]
-    (println "Change detected:" (sanitized-file-src-path from file))
-    (cond
-      (valid-file fennel/matcher file)
-      (transpile-file-to fennel/transpile from to file)
+  (fn [{:keys [file action]}]
+    (when-not (= :delete action)
+      (println "Change detected:" (sanitized-file-src-path from file))
+      (cond
+        (valid-file fennel/matcher file)
+        (transpile-file-to fennel/transpile from to file)
 
-      (valid-file file)
-      (copy-file-to from to file))))
+        (valid-file file)
+        (copy-file-to from to file)))))
 
 (defn ^:private outbound-handler
-  [from board]
-  (fn [{:keys [file]}]
-    (println "AQUI!!!" (sanitized-file-src-path file))
-    #_(write-file! board (sanitized-file-src-path file))))
+  [to board]
+  (fn [{:keys [file action]}]
+    (when-not (= :delete action)
+      (write-file! board (.getPath file) (sanitized-file-src-path to file)))))
 
 (defn ^:private write-all-out
   [board to]
@@ -377,10 +382,10 @@
                     fennel/transpile
                     dir out-dir)
   (write-all-out board out-dir)
-  #_(reset! watchers {:inbound (watch/watch-dir (inbound-handler dir out-dir)
-                                                (io/file dir))
-                      :outbound (watch/watch-dir (outbound-handler dir board)
-                                                 (io/file out-dir))})
+  (reset! watchers {:inbound (watch/watch-dir (inbound-handler dir out-dir)
+                                              (io/file dir))
+                    :outbound (watch/watch-dir (outbound-handler out-dir board)
+                                               (io/file out-dir))})
   true)
 
 (defn watch-dir
@@ -390,14 +395,6 @@
    (if-not @watchers
      (initialize-dir dir board opts)
      (println "A watcher is already running!"))))
-
-(defn stop-watch-dir []
-  (if-not @watchers
-    (println "No watcher initialized to stop!")
-    (do (watch/close-watcher (:inbound @watchers))
-        (watch/close-watcher (:outbound @watchers))
-        (reset! watchers nil)
-        true)))
 
 (comment
   (def board (connect-board! "/dev/cu.SLAB_USBtoUART"))

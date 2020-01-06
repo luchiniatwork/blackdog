@@ -27,10 +27,11 @@
 
 #_(bd/write-file! board "out/another-sub/blink.lua" "another-sub2/blink333.lua")
 
-#_(bd/send-command board "os.cat(\"touch.lua\")")
-
-#_(bd/disconnect-board! board)
+#_(bd/send-command board "os.cat(\"blink.lua\")")
 
 #_(with-out-str (bd/send-command board "os.exists(\"another-sub2\")"))
 
 #_(bd/mk-remote-dirs board "sub1/sub2/sub3/blink333.lua")
+
+
+#_(bd/disconnect-board! board)

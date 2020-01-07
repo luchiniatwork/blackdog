@@ -151,16 +151,19 @@
   (let [state-cmd (-> @state meta :opts :cmd)
         state-out-chan (-> @state meta :opts :out-chan)]
     (cond
+      ;; During receive, we just got a control and should transition to
+      ;; ready to receive
+      (= :control e)
+      (transition-to! 'ready-to-receive)
+
       ;; Prompt found after a command. We should be ready and inform command
-      ;; FIXME: make it more generic in case user chdirs
-      (and (= "/ > " e)
+      (and (re-matches #"^\/.* \> $" e)
            (= 'cmd @state))
       (do (>!! state-out-chan :done)
           (transition-to! 'ready))
-      
+
       ;; Prompt found. We should be ready
-      ;; FIXME: make it more generic in case user chdirs
-      (= "/ > " e)
+      (re-matches #"^\/.* \> $" e)
       (transition-to! 'ready)
 
       ;; We are parsing a command and it's not the echo so it's console
@@ -173,11 +176,6 @@
       (= 'receive-mode @state)
       (when (= state-cmd e)
         (transition-to! 'waiting-receive-ack))
-
-      ;; During receive, we just got a control and should transition to
-      ;; ready to receive
-      (= :control e)
-      (transition-to! 'ready-to-receive)
 
       ;; Sometimes it's just a padding line
       (= "" e)

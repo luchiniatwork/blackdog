@@ -15,7 +15,9 @@
 
 #_(bd/send-command board "os.remove(\"touch.lua\")")
 
-#_(bd/send-command board "os")
+#_(bd/send-command board "os.cd(\"lib\")")
+
+#_(bd/send-command board "os.pwda()")
 
 #_(bd/write-file! board "out/touch.lua" "touch.lua")
 

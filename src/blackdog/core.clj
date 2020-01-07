@@ -3,7 +3,7 @@
             [clojure.core.async :refer [<! >! <!! >!! go go-loop chan]]
             [clojure.java.io :as io]
             [clojure.string :as s]
-            [juxt.dirwatch :as watch]
+            [hawk.core :as hawk]
             [me.raynes.fs :as fs]
             [serial.core :as serial]
             [serial.util :as util]))
@@ -284,8 +284,8 @@
 (defn stop-watch-dir []
   (if-not @watchers
     (println "No watcher initialized to stop!")
-    (do (watch/close-watcher (:inbound @watchers))
-        (watch/close-watcher (:outbound @watchers))
+    (do (hawk/stop! (:inbound @watchers))
+        (hawk/stop! (:outbound @watchers))
         (reset! watchers nil)
         true)))
 
@@ -344,21 +344,25 @@
 
 (defn ^:private inbound-handler
   [from to]
-  (fn [{:keys [file action]}]
-    (when-not (= :delete action)
+  (fn [ctx {:keys [file kind]}]
+    (when-not (or (fs/directory? file) (= :delete kind))
       (println "Change detected:" (sanitized-file-src-path from file))
       (cond
         (valid-file fennel/matcher file)
         (transpile-file-to fennel/transpile from to file)
 
         (valid-file file)
-        (copy-file-to from to file)))))
+        (copy-file-to from to file)))
+    ctx))
 
 (defn ^:private outbound-handler
   [to board]
-  (fn [{:keys [file action]}]
-    (when-not (= :delete action)
-      (write-file! board (.getPath file) (sanitized-file-src-path to file)))))
+  (fn [ctx {:keys [file kind]}]
+    (when-not (or (fs/directory? file) (= :delete kind))
+      (write-file! board
+                   (.getPath file)
+                   (sanitized-file-src-path to file)))
+    ctx))
 
 (defn ^:private write-all-out
   [board to]
@@ -382,10 +386,10 @@
                     fennel/transpile
                     dir out-dir)
   (write-all-out board out-dir)
-  (reset! watchers {:inbound (watch/watch-dir (inbound-handler dir out-dir)
-                                              (io/file dir))
-                    :outbound (watch/watch-dir (outbound-handler out-dir board)
-                                               (io/file out-dir))})
+  (reset! watchers {:inbound (hawk/watch! [{:paths [dir]
+                                            :handler (inbound-handler dir out-dir)}])
+                    :outbound (hawk/watch! [{:paths [out-dir]
+                                             :handler (outbound-handler out-dir board)}])})
   true)
 
 (defn watch-dir

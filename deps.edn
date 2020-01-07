@@ -4,4 +4,4 @@
         org.clojure/core.async          {:mvn/version "0.6.532"}
         me.raynes/fs                    {:mvn/version "1.4.6"}
         clj-serial                      {:mvn/version "2.0.5"}
-        juxt/dirwatch                   {:mvn/version "0.2.5"}}}
+        hawk                            {:mvn/version "0.2.11"}}}

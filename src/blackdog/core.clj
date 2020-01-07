@@ -147,8 +147,13 @@
         (reset! crlf :none))))
 
 (defn ^:private parse-entry [e]
-  (log (str "Parsing: '" e "' - meta: '" (-> @state meta :opts) "'"))
-  (let [state-cmd (-> @state meta :opts :cmd)
+  (log (str "Parsing: '" e "'\n")
+       (str " - meta cmd: '" (-> @state meta :opts :cmd) "'\n")
+       (str " - state: " @state))
+  (let [trimmed-e (-> e
+                      (s/replace-first "\n" "")
+                      (s/replace-first "\r" ""))
+        state-cmd (-> @state meta :opts :cmd)
         state-out-chan (-> @state meta :opts :out-chan)]
     (cond
       ;; During receive, we just got a control and should transition to
@@ -157,28 +162,28 @@
       (transition-to! 'ready-to-receive)
 
       ;; Prompt found after a command. We should be ready and inform command
-      (and (re-matches #"^\/.* \> $" e)
+      (and (re-matches #"^\/.* \> $" trimmed-e)
            (= 'cmd @state))
       (do (>!! state-out-chan :done)
           (transition-to! 'ready))
 
       ;; Prompt found. We should be ready
-      (re-matches #"^\/.* \> $" e)
+      (re-matches #"^\/.* \> $" trimmed-e)
       (transition-to! 'ready)
 
       ;; We are parsing a command and it's not the echo so it's console
       ;; out. Inform command.
       (and (= 'cmd @state)
-           (not= state-cmd e))
-      (>!! state-out-chan e)
+           (not= state-cmd trimmed-e))
+      (>!! state-out-chan trimmed-e)
 
       ;; If it's in receive-mode and it's an echo, we can start waiting
       (= 'receive-mode @state)
-      (when (= state-cmd e)
+      (when (= state-cmd trimmed-e)
         (transition-to! 'waiting-receive-ack))
 
       ;; Sometimes it's just a padding line
-      (= "" e)
+      (= "" trimmed-e)
       (do)
 
       ;; Other times we have no idea what's happening
@@ -199,14 +204,14 @@
                          byte-array)]
             (>! rx-chan b)))
       (log "\n====\nRead" n "bytes")
-      (log " =" (->> buf
-                     (take n)
-                     byte-array
-                     vec))
-      (log " =" (->> buf
-                     (take n)
-                     byte-array
-                     String.)))))
+      #_(log " =" (->> buf
+                       (take n)
+                       byte-array
+                       vec))
+      #_(log " =" (->> buf
+                       (take n)
+                       byte-array
+                       String.)))))
 
 (defn send-command [{:keys [port] :as board} cmd]
   (wait-for board 'ready)

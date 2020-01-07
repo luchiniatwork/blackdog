@@ -15,9 +15,9 @@
 
 #_(bd/send-command board "os.remove(\"touch.lua\")")
 
-#_(bd/send-command board "os.cd(\"lib\")")
+#_(bd/send-command board "os.cd(\"/\")")
 
-#_(bd/send-command board "os.pwda()")
+#_(bd/send-command board "os.pwd()")
 
 #_(bd/write-file! board "out/touch.lua" "touch.lua")
 
@@ -34,6 +34,5 @@
 #_(with-out-str (bd/send-command board "os.exists(\"another-sub2\")"))
 
 #_(bd/mk-remote-dirs board "sub1/sub2/sub3/blink333.lua")
-
 
 #_(bd/disconnect-board! board)

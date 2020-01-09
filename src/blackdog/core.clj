@@ -213,7 +213,7 @@
                        byte-array
                        String.)))))
 
-(defn send-command [{:keys [port] :as board} cmd]
+(defn send-command! [{:keys [port] :as board} cmd]
   (wait-for board 'ready)
   (let [out-chan (chan)]
     (transition-to! 'cmd {:cmd cmd
@@ -225,7 +225,7 @@
                         (s/join "\n" out)
                         (recur (conj out i)))))))))
 
-(defn ^:private mk-remote-dirs
+(defn ^:private mk-remote-dirs!
   [board dst]
   (let [parts (drop-last (s/split dst #"\/"))]
     (loop [accum []
@@ -235,9 +235,9 @@
             path (s/join "/" new-accum)]
         (when-not (= "" path)
           (when (= "false\n" (with-out-str
-                               (send-command board
-                                             (str "os.exists(\"" path "\")"))))
-            (send-command board (str "os.mkdir(\"" path "\")"))))
+                               (send-command! board
+                                              (str "os.exists(\"" path "\")"))))
+            (send-command! board (str "os.mkdir(\"" path "\")"))))
         (when-not (empty? r)
           (recur new-accum (first r) (rest r)))))))
 
@@ -245,7 +245,7 @@
   ([board file-name]
    (write-file! board file-name file-name))
   ([board src-file-name dst-file-name]
-   (mk-remote-dirs board dst-file-name)
+   (mk-remote-dirs! board dst-file-name)
    (let [fis (io/input-stream (io/file src-file-name))]
      (print "Writing:" src-file-name "as" dst-file-name " ")
      (start-receive-mode! board dst-file-name)
@@ -284,7 +284,7 @@
       (force-ready! board)
       board)))
 
-(defn stop-watch-dir []
+(defn stop-watch-dir! []
   (if-not @watchers
     (println "No watcher initialized to stop!")
     (do (hawk/stop! (:inbound @watchers))
@@ -294,13 +294,13 @@
 
 (defn disconnect-board! [{:keys [port] :as board}]
   (when @watchers
-    (stop-watch-dir))
+    (stop-watch-dir!))
   (serial/close! port)
   true)
 
-(defn ^:private valid-file
+(defn ^:private valid-file?
   ([file]
-   (valid-file (constantly true) file))
+   (valid-file? (constantly true) file))
   ([pred file]
    (let [ff (io/file file)]
      (and (not (fs/directory? ff))
@@ -309,7 +309,7 @@
 (defn ^:private valid-files
   [pred from]
   (->> from io/file file-seq
-       (filter #(valid-file pred %))))
+       (filter #(valid-file? pred %))))
 
 (defn ^:private sanitized-file-src-path
   [from file]
@@ -323,27 +323,27 @@
         file-sub-path (->> file .getAbsolutePath fs/split (drop drop-n))]
     (.getPath (apply io/file (into [to] file-sub-path)))))
 
-(defn ^:private copy-file-to
+(defn ^:private copy-file-to!
   [from to file]
   (println "Preparing:" (sanitized-file-src-path from file))
   (fs/copy+ file (sanitized-file-to-path from to file)))
 
-(defn ^:private copy-dir-to
+(defn ^:private copy-dir-to!
   ([from to]
-   (copy-dir-to (constantly true) from to))
+   (copy-dir-to! (constantly true) from to))
   ([pred from to]
    (doseq [file (valid-files pred from)]
-     (copy-file-to from to file))))
+     (copy-file-to! from to file))))
 
-(defn ^:private transpile-file-to
+(defn ^:private transpile-file-to!
   [transpile-f from to file]
   (println "Transpiling:" (sanitized-file-src-path from file))
   (transpile-f from to file))
 
-(defn ^:private transpile-dir-to
+(defn ^:private transpile-dir-to!
   [pred transpile-f from to]
   (doseq [file (valid-files pred from)]
-    (transpile-file-to transpile-f from to file)))
+    (transpile-file-to! transpile-f from to file)))
 
 (defn ^:private inbound-handler
   [from to]
@@ -351,11 +351,11 @@
     (when-not (or (fs/directory? file) (= :delete kind))
       (println "Change detected:" (sanitized-file-src-path from file))
       (cond
-        (valid-file fennel/matcher file)
-        (transpile-file-to fennel/transpile from to file)
+        (valid-file? fennel/matcher file)
+        (transpile-file-to! fennel/transpile from to file)
 
-        (valid-file file)
-        (copy-file-to from to file)))
+        (valid-file? file)
+        (copy-file-to! from to file)))
     ctx))
 
 (defn ^:private outbound-handler
@@ -367,13 +367,13 @@
                    (sanitized-file-src-path to file)))
     ctx))
 
-(defn ^:private write-all-out
+(defn ^:private write-all-out!
   [board to]
   (doseq [file (->> to io/file file-seq (filter fs/file?))]
     (let [pretty-file (sanitized-file-src-path to file)]
       (write-file! board (.getPath file) pretty-file))))
 
-(defn ^:private initialize-dir
+(defn ^:private initialize-dir!
   [dir board {:keys [out-dir clean-out?]
               :or {out-dir "out/"
                    clean-out? true}
@@ -383,39 +383,39 @@
   (when (and clean-out? (fs/exists? out-dir))
     (println "Cleaning:" out-dir)
     (fs/delete-dir out-dir))
-  (copy-dir-to #(not (fennel/matcher %))
-               dir out-dir)
-  (transpile-dir-to fennel/matcher
-                    fennel/transpile
-                    dir out-dir)
-  (write-all-out board out-dir)
+  (copy-dir-to! #(not (fennel/matcher %))
+                dir out-dir)
+  (transpile-dir-to! fennel/matcher
+                     fennel/transpile
+                     dir out-dir)
+  (write-all-out! board out-dir)
   (reset! watchers {:inbound (hawk/watch! [{:paths [dir]
                                             :handler (inbound-handler dir out-dir)}])
                     :outbound (hawk/watch! [{:paths [out-dir]
                                              :handler (outbound-handler out-dir board)}])})
   true)
 
-(defn watch-dir
-  ([dir board]
-   (watch-dir dir board nil))
-  ([dir board opts]
+(defn watch-dir!
+  ([board dir]
+   (watch-dir! board dir nil))
+  ([board dir opts]
    (if-not @watchers
-     (initialize-dir dir board opts)
+     (initialize-dir! dir board opts)
      (println "A watcher is already running!"))))
 
 (comment
   (def board (connect-board! "/dev/cu.SLAB_USBtoUART"))
 
-  (send-command board "os.version()")
+  (send-command! board "os.version()")
 
-  (send-command board "os.ls()")
+  (send-command! board "os.ls()")
 
-  (send-command board "os.remove(\"touch.lua\")")
+  (send-command! board "os.remove(\"touch.lua\")")
 
-  (send-command board "os")
+  (send-command! board "os")
 
   (write-file! board "touch.lua")
 
-  (send-command board "os.cat(\"touch.lua\")")
+  (send-command! board "os.cat(\"touch.lua\")")
 
   (disconnect-board! board))

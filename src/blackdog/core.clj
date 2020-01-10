@@ -136,6 +136,7 @@
 
     :otherwise
     (swap! entry #(str % (char x))))
+
   (when (or (= @crlf :crlf) (= @crlf :control-ack))
     (do (log "Putting entry in queue")
         (case @crlf
@@ -185,12 +186,11 @@
 
       ;; Sometimes it's just a padding line
       (= "" trimmed-e)
-      (do)
+      (println "")
 
       ;; Other times we have no idea what's happening
       :otherwise
-      (do
-        (log "UNKNOWN!" (-> e .getBytes vec))))))
+      (println e))))
 
 (defn ^:private rx-listener [rx-chan]
   (fn [is]

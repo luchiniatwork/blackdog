@@ -1,5 +1,6 @@
 (ns blackdog.core
   (:require [blackdog.plugin-fennel :as fennel]
+            [blackdog.utils :as utils]
             [clojure.core.async :refer [<! >! <!! >!! go go-loop chan]]
             [clojure.java.io :as io]
             [clojure.string :as s]
@@ -298,63 +299,38 @@
   (serial/close! port)
   true)
 
-(defn ^:private valid-file?
-  ([file]
-   (valid-file? (constantly true) file))
-  ([pred file]
-   (let [ff (io/file file)]
-     (and (not (fs/directory? ff))
-          (pred ff)))))
-
-(defn ^:private valid-files
-  [pred from]
-  (->> from io/file file-seq
-       (filter #(valid-file? pred %))))
-
-(defn ^:private sanitized-file-src-path
-  [from file]
-  (let [drop-n (-> from io/file .getAbsolutePath fs/split count)
-        file-sub-path (->> file .getAbsolutePath fs/split (drop drop-n))]
-    (.getPath (apply io/file file-sub-path))))
-
-(defn ^:private sanitized-file-to-path
-  [from to file]
-  (let [drop-n (-> from io/file .getAbsolutePath fs/split count)
-        file-sub-path (->> file .getAbsolutePath fs/split (drop drop-n))]
-    (.getPath (apply io/file (into [to] file-sub-path)))))
-
 (defn ^:private copy-file-to!
   [from to file]
-  (println "Preparing:" (sanitized-file-src-path from file))
-  (fs/copy+ file (sanitized-file-to-path from to file)))
+  (println "Preparing:" (utils/sanitized-file-src-path from file))
+  (fs/copy+ file (utils/sanitized-file-to-path from to file)))
 
 (defn ^:private copy-dir-to!
   ([from to]
    (copy-dir-to! (constantly true) from to))
   ([pred from to]
-   (doseq [file (valid-files pred from)]
+   (doseq [file (utils/valid-files pred from)]
      (copy-file-to! from to file))))
 
 (defn ^:private transpile-file-to!
   [transpile-f from to file]
-  (println "Transpiling:" (sanitized-file-src-path from file))
+  (println "Transpiling:" (utils/sanitized-file-src-path from file))
   (transpile-f from to file))
 
 (defn ^:private transpile-dir-to!
   [pred transpile-f from to]
-  (doseq [file (valid-files pred from)]
+  (doseq [file (utils/valid-files pred from)]
     (transpile-file-to! transpile-f from to file)))
 
 (defn ^:private inbound-handler
   [from to]
   (fn [ctx {:keys [file kind]}]
     (when-not (or (fs/directory? file) (= :delete kind))
-      (println "Change detected:" (sanitized-file-src-path from file))
+      (println "Change detected:" (utils/sanitized-file-src-path from file))
       (cond
-        (valid-file? fennel/matcher file)
+        (utils/valid-file? fennel/matcher file)
         (transpile-file-to! fennel/transpile from to file)
 
-        (valid-file? file)
+        (utils/valid-file? file)
         (copy-file-to! from to file)))
     ctx))
 
@@ -364,13 +340,13 @@
     (when-not (or (fs/directory? file) (= :delete kind))
       (write-file! board
                    (.getPath file)
-                   (sanitized-file-src-path to file)))
+                   (utils/sanitized-file-src-path to file)))
     ctx))
 
 (defn ^:private write-all-out!
   [board to]
   (doseq [file (->> to io/file file-seq (filter fs/file?))]
-    (let [pretty-file (sanitized-file-src-path to file)]
+    (let [pretty-file (utils/sanitized-file-src-path to file)]
       (write-file! board (.getPath file) pretty-file))))
 
 (defn ^:private initialize-dir!

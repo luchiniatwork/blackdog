@@ -46,6 +46,9 @@
 
              (and (= from 'receive-mode)
                   (= to 'waiting-receive-ack))
+
+             (and (= from 'receive-mode)
+                  (= to 'ready-to-receive))
              
              (and (= from 'ready)
                   (= to 'ready-to-receive))

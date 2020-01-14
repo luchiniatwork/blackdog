@@ -2,7 +2,7 @@
 [whitecat]: https://github.com/whitecatboard/whitecat-console
 [fennel]: https://fennel-lang.org/
 [clojure]: https://clojure.org/
-[esp32-door]: https://github.com/luchiniatwork/esp32-door-alarm
+[esp32-door-alarm]: https://github.com/luchiniatwork/esp32-door-alarm
 [esp32]: http://esp32.net/
 [usb-uart]: https://www.silabs.com/products/development-tools/software/usb-to-uart-bridge-vcp-drivers
 

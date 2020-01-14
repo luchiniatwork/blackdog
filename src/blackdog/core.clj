@@ -325,16 +325,17 @@
     (transpile-file-to! transpile-f from to file)))
 
 (defn ^:private inbound-handler
-  [from to]
+  [dirs to]
   (fn [ctx {:keys [file kind]}]
-    (when-not (or (fs/directory? file) (= :delete kind))
-      (println "Change detected:" (utils/sanitized-file-src-path from file))
-      (cond
-        (utils/valid-file? fennel/matcher file)
-        (transpile-file-to! fennel/transpile from to file)
+    (let [from (utils/select-from dirs file)]
+      (when-not (or (fs/directory? file) (= :delete kind))
+        (println "Change detected:" (utils/sanitized-file-src-path from file))
+        (cond
+          (utils/valid-file? fennel/matcher file)
+          (transpile-file-to! fennel/transpile from to file)
 
-        (utils/valid-file? file)
-        (copy-file-to! from to file)))
+          (utils/valid-file? file)
+          (copy-file-to! from to file))))
     ctx))
 
 (defn ^:private outbound-handler
@@ -353,34 +354,35 @@
       (write-file! board (.getPath file) pretty-file))))
 
 (defn ^:private initialize-dir!
-  [dir board {:keys [out-dir clean-out?]
-              :or {out-dir "out/"
-                   clean-out? true}
-              :as opts}]
-  (println "Watching dir:" dir)
+  [board dirs {:keys [out-dir clean-out?]
+               :or {out-dir "out/"
+                    clean-out? true}
+               :as opts}]
+  (println "Watching dir(s):" dirs)
   (println "Working dir:" out-dir)
   (when (and clean-out? (fs/exists? out-dir))
     (println "Cleaning:" out-dir)
     (fs/delete-dir out-dir))
-  (copy-dir-to! #(not (fennel/matcher %))
-                dir out-dir)
-  (transpile-dir-to! fennel/matcher
-                     fennel/transpile
-                     dir out-dir)
+  (doseq [dir dirs]
+    (copy-dir-to! #(not (fennel/matcher %))
+                  dir out-dir)
+    (transpile-dir-to! fennel/matcher
+                       fennel/transpile
+                       dir out-dir))
   (write-all-out! board out-dir)
-  (reset! watchers {:inbound (hawk/watch! [{:paths [dir]
-                                            :handler (inbound-handler dir out-dir)}])
+  (reset! watchers {:inbound (hawk/watch! [{:paths dirs
+                                            :handler (inbound-handler dirs out-dir)}])
                     :outbound (hawk/watch! [{:paths [out-dir]
                                              :handler (outbound-handler out-dir board)}])})
   true)
 
 (defn watch-dir!
-  ([board dir]
-   (watch-dir! board dir nil))
-  ([board dir opts]
-   (if-not @watchers
-     (initialize-dir! dir board opts)
-     (println "A watcher is already running!"))))
+  [board & dirs]
+  (if-not @watchers
+    (if (map? (last dirs))
+      (initialize-dir! board (drop-last dirs) (last dirs))
+      (initialize-dir! board dirs nil))
+    (println "A watcher is already running!")))
 
 (comment
   (def board (connect-board! "/dev/cu.SLAB_USBtoUART"))

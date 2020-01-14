@@ -7,13 +7,23 @@
    (valid-file? (constantly true) file))
   ([pred file]
    (let [ff (io/file file)]
-     (and (not (fs/directory? ff))
+     (and (fs/exists? ff)
+          (not (fs/directory? ff))
           (pred ff)))))
 
 (defn valid-files
   [pred from]
   (->> from io/file file-seq
        (filter #(valid-file? pred %))))
+
+(defn select-from
+  [dirs file]
+  (let [cartesian (for [dir dirs
+                        p (fs/parents file)]
+                    (vector (fs/absolute dir) p))]
+    (->> cartesian
+         (filter #(= (first %) (second %)))
+         ffirst)))
 
 (defn sanitized-file-src-path
   [from file]
